@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Driver View</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  body { font-family: -apple-system, sans-serif; background: #111; color: #eee; margin: 0; padding: 0; }
+  header { padding: 12px; text-align: center; }
+  header h1 { font-size: 1.1rem; margin: 4px 0; }
+  #banner {
+    display: none; background: #e63946; color: white; text-align: center;
+    padding: 14px; font-weight: 700; font-size: 1.05rem; position: sticky; top: 0; z-index: 1000;
+  }
+  #banner.show { display: block; animation: flash 1s infinite; }
+  @keyframes flash { 0%,100% { background:#e63946; } 50% { background:#ff5a63; } }
+  #map { height: 62vh; width: 100%; }
+  #info { padding: 10px 16px; color: #999; font-size: 0.85rem; text-align: center; }
+  #legend { display:flex; justify-content:center; gap:16px; font-size:0.75rem; color:#888; padding-bottom:8px; }
+</style>
+</head>
+<body>
+  <div id="banner">🚨 AMBULANCE APPROACHING ON YOUR ROUTE — MAKE WAY 🚨</div>
+  <header><h1>🚗 Driver View</h1></header>
+  <div id="map"></div>
+  <div id="legend">
+    <span>🚗 you</span><span>🚑 ambulance</span><span>🚙 other traffic</span>
+  </div>
+  <div id="info">Waiting for GPS lock...</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const map = L.map('map').setView([17.385, 78.4867], 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  const driverIcon = L.divIcon({ className: '', html: '<div style="font-size:26px">🚗</div>', iconSize: [30,30] });
+  const ambulanceIcon = L.divIcon({ className: '', html: '<div style="font-size:26px">🚑</div>', iconSize: [30,30] });
+  const otherIcon = L.divIcon({ className: '', html: '<div style="font-size:20px;opacity:0.75">🚙</div>', iconSize: [24,24] });
+
+  let driverMarker = null;
+  let ambulanceMarker = null;
+  let routeLine = null;
+  let otherMarkers = {};
+  const info = document.getElementById('info');
+  const banner = document.getElementById('banner');
+
+  let firstFix = true;
+  let driverId = localStorage ? null : null; // no localStorage per artifact rules elsewhere, keep in-memory
+  let driverIdMem = Math.random().toString(36).slice(2, 10);
+
+  function checkProximity(lat, lng) {
+    fetch('/api/driver/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ driver_id: driverIdMem, lat, lng })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (!data.ambulance_active) {
+        info.textContent = 'No active ambulance mission nearby.';
+        banner.classList.remove('show');
+        if (ambulanceMarker) { map.removeLayer(ambulanceMarker); ambulanceMarker = null; }
+        if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+        clearOthers();
+        return;
+      }
+
+      if (data.route && data.route.length && !routeLine) {
+        routeLine = L.polyline(data.route, { color: '#e63946', weight: 4, opacity: 0.5 }).addTo(map);
+      }
+
+      if (ambulanceMarker) {
+        ambulanceMarker.setLatLng([data.ambulance_lat, data.ambulance_lng]);
+      } else if (data.ambulance_lat) {
+        ambulanceMarker = L.marker([data.ambulance_lat, data.ambulance_lng], { icon: ambulanceIcon }).addTo(map);
+      }
+
+      renderOthers(data.other_drivers || []);
+
+      if (data.alert) {
+        info.textContent = `Ambulance is on your route — ${data.distance_along_route_m} m ahead along the road`;
+        banner.classList.add('show');
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      } else {
+        info.textContent = 'Ambulance active nearby, but not on your current route.';
+        banner.classList.remove('show');
+      }
+    })
+    .catch(err => { info.textContent = 'Server error: ' + err; });
+  }
+
+  function renderOthers(others) {
+    const seenIds = new Set();
+    others.forEach((o, i) => {
+      const id = 'o' + i + '_' + o.lat.toFixed(4) + '_' + o.lng.toFixed(4);
+      seenIds.add(i);
+      if (otherMarkers[i]) {
+        otherMarkers[i].setLatLng([o.lat, o.lng]);
+      } else {
+        otherMarkers[i] = L.marker([o.lat, o.lng], { icon: otherIcon }).addTo(map);
+      }
+    });
+    Object.keys(otherMarkers).forEach(key => {
+      if (!seenIds.has(Number(key))) {
+        map.removeLayer(otherMarkers[key]);
+        delete otherMarkers[key];
+      }
+    });
+  }
+
+  function clearOthers() {
+    Object.values(otherMarkers).forEach(m => map.removeLayer(m));
+    otherMarkers = {};
+  }
+
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition((pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+
+      if (driverMarker) {
+        driverMarker.setLatLng([lat, lng]);
+      } else {
+        driverMarker = L.marker([lat, lng], { icon: driverIcon }).addTo(map);
+      }
+
+      if (firstFix) {
+        map.setView([lat, lng], 15);
+        firstFix = false;
+      }
+
+      checkProximity(lat, lng);
+    }, (err) => {
+      info.textContent = 'Location error: ' + err.message;
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
+  } else {
+    info.textContent = 'Geolocation not supported on this device/browser';
+  }
+
+  setInterval(() => {
+    if (driverMarker) {
+      const pos = driverMarker.getLatLng();
+      checkProximity(pos.lat, pos.lng);
+    }
+  }, 2500);
+</script>
+</body>
+</html>

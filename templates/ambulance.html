@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ambulance Mission Control</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, sans-serif; background: #111; color: #eee; margin: 0; padding: 0; }
+  header { padding: 14px 16px 6px; text-align: center; }
+  header h1 { font-size: 1.2rem; margin: 0; }
+  .panel { padding: 16px; max-width: 480px; margin: 0 auto; }
+  input[type=text] {
+    width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px;
+    border: 1px solid #333; background: #1a1a1a; color: #eee; font-size: 1rem;
+  }
+  label { font-size: 0.85rem; color: #999; display: block; margin-bottom: 4px; }
+  input[type=file] { color: #999; margin-bottom: 14px; width: 100%; }
+  button {
+    width: 100%; padding: 14px; border: none; border-radius: 10px;
+    font-size: 1rem; font-weight: 700; color: white; background: #2a9d8f; margin-bottom: 10px;
+  }
+  button.active { background: #e63946; }
+  button:disabled { opacity: 0.4; }
+  #verifyMsg, #photoMsg { font-size: 0.85rem; color: #e9c46a; margin-bottom: 10px; min-height: 1.2em; }
+  .badge { display: inline-block; background: #2a9d8f; color: white; border-radius: 6px; padding: 3px 8px; font-size: 0.75rem; margin-bottom: 12px; }
+  #map { height: 42vh; width: 100%; display: none; }
+  #mapHint { text-align: center; color: #2a9d8f; font-size: 0.8rem; padding: 6px 16px; display: none; }
+  #status { color: #999; font-size: 0.9rem; text-align: center; padding: 10px 0; }
+  #coords { font-family: monospace; color: #666; text-align: center; font-size: 0.8rem; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <header><h1>🚑 Ambulance Mission Control</h1></header>
+
+  <!-- STEP 1: Verification -->
+  <div class="panel" id="verifyPanel">
+    <label>Driver name</label>
+    <input type="text" id="driverName" placeholder="Full name">
+    <label>License / ID number</label>
+    <input type="text" id="licenseId" placeholder="e.g. DL-04-2024-0001234">
+    <label>Photo verification (take a live photo)</label>
+    <input type="file" id="photoInput" accept="image/*" capture="user">
+    <div id="photoMsg"></div>
+    <button id="verifyBtn">Verify & Continue</button>
+    <div id="verifyMsg"></div>
+  </div>
+
+  <!-- STEP 2: Destination + mission -->
+  <div class="panel hidden" id="missionPanel">
+    <div class="badge" id="verifiedBadge"></div>
+    <div id="mapHint">👆 Tap the map to set the hospital / destination</div>
+    <div id="map"></div>
+    <button id="startBtn" disabled>Set a destination first</button>
+    <div id="status">Mission inactive</div>
+    <div id="coords">—</div>
+  </div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const verifyPanel = document.getElementById('verifyPanel');
+  const missionPanel = document.getElementById('missionPanel');
+  const verifyBtn = document.getElementById('verifyBtn');
+  const verifyMsg = document.getElementById('verifyMsg');
+  const photoInput = document.getElementById('photoInput');
+  const photoMsg = document.getElementById('photoMsg');
+  const verifiedBadge = document.getElementById('verifiedBadge');
+  const mapHint = document.getElementById('mapHint');
+  const startBtn = document.getElementById('startBtn');
+  const status = document.getElementById('status');
+  const coords = document.getElementById('coords');
+
+  let photoCaptured = false;
+  let map, ambMarker, destMarker, routeLine;
+  let currentLat = null, currentLng = null;
+  let destLat = null, destLng = null;
+  let active = false;
+  let watchId = null;
+
+  photoInput.addEventListener('change', () => {
+    photoCaptured = photoInput.files && photoInput.files.length > 0;
+    photoMsg.textContent = photoCaptured ? '✓ Photo captured' : '';
+  });
+
+  verifyBtn.addEventListener('click', async () => {
+    const name = document.getElementById('driverName').value.trim();
+    const licenseId = document.getElementById('licenseId').value.trim();
+
+    if (!name || !licenseId || !photoCaptured) {
+      verifyMsg.textContent = 'Please fill in your name, license ID, and capture a photo.';
+      return;
+    }
+
+    const res = await fetch('/api/ambulance/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, license_id: licenseId, photo_captured: true })
+    });
+    const data = await res.json();
+
+    if (data.status === 'ok') {
+      verifiedBadge.textContent = `✓ Verified: ${data.driver.name}`;
+      verifyPanel.classList.add('hidden');
+      missionPanel.classList.remove('hidden');
+      initMap();
+    } else {
+      verifyMsg.textContent = data.message || 'Verification failed.';
+    }
+  });
+
+  function initMap() {
+    map = L.map('map').setView([17.385, 78.4867], 14);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+    document.getElementById('map').style.display = 'block';
+    mapHint.style.display = 'block';
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        currentLat = pos.coords.latitude;
+        currentLng = pos.coords.longitude;
+        map.setView([currentLat, currentLng], 15);
+        ambMarker = L.marker([currentLat, currentLng], {
+          icon: L.divIcon({ className: '', html: '<div style="font-size:26px">🚑</div>', iconSize: [30,30] })
+        }).addTo(map);
+      }, () => { status.textContent = 'Could not get starting location — tap map twice: first for start, then destination.'; });
+    }
+
+    map.on('click', (e) => {
+      if (currentLat === null) {
+        currentLat = e.latlng.lat; currentLng = e.latlng.lng;
+        ambMarker = L.marker([currentLat, currentLng], {
+          icon: L.divIcon({ className: '', html: '<div style="font-size:26px">🚑</div>', iconSize: [30,30] })
+        }).addTo(map);
+        mapHint.textContent = '👆 Now tap to set the hospital / destination';
+        return;
+      }
+      destLat = e.latlng.lat; destLng = e.latlng.lng;
+      if (destMarker) map.removeLayer(destMarker);
+      destMarker = L.marker([destLat, destLng], {
+        icon: L.divIcon({ className: '', html: '<div style="font-size:26px">🏥</div>', iconSize: [30,30] })
+      }).addTo(map);
+      startBtn.disabled = false;
+      startBtn.textContent = 'START MISSION';
+      mapHint.textContent = 'Destination set — tap again to move it, or start the mission';
+    });
+  }
+
+  startBtn.addEventListener('click', async () => {
+    if (!active) {
+      startBtn.disabled = true;
+      startBtn.textContent = 'Fetching route...';
+      const res = await fetch('/api/ambulance/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start_lat: currentLat, start_lng: currentLng, dest_lat: destLat, dest_lng: destLng })
+      });
+      const data = await res.json();
+      active = true;
+      startBtn.disabled = false;
+      startBtn.textContent = 'STOP MISSION';
+      startBtn.classList.add('active');
+      status.textContent = 'Mission ACTIVE — broadcasting location along route';
+
+      if (routeLine) map.removeLayer(routeLine);
+      routeLine = L.polyline(data.route, { color: '#e63946', weight: 4, opacity: 0.7 }).addTo(map);
+
+      startTracking();
+    } else {
+      await fetch('/api/ambulance/stop', { method: 'POST' });
+      active = false;
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      startBtn.textContent = 'START MISSION';
+      startBtn.classList.remove('active');
+      status.textContent = 'Mission inactive';
+      coords.textContent = '—';
+    }
+  });
+
+  function startTracking() {
+    watchId = navigator.geolocation.watchPosition(async (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      coords.textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      if (ambMarker) ambMarker.setLatLng([lat, lng]);
+      await fetch('/api/ambulance/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat, lng })
+      });
+    }, (err) => { status.textContent = 'Location error: ' + err.message; },
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
+  }
+</script>
+</body>
+</html>
