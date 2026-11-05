@@ -115,20 +115,22 @@
     icon: L.divIcon({ className: '', html: '<div class="amb">🏥</div>', iconSize: [30, 30], iconAnchor: [15, 15] })
   }).addTo(map);
 
+  // Drawn facing right (east), so its direction is the same on every device; emoji differ by platform.
+  const AMB_SVG = '<svg width="36" height="24" viewBox="0 0 36 24" style="display:block" aria-label="ambulance"><rect x="9" y="1.5" width="6" height="3" rx="1" fill="#e63946"/><rect x="1" y="4.5" width="22" height="14" rx="2" fill="#fff" stroke="#333"/><path d="M23 8.5h6l5 5v5H23z" fill="#fff" stroke="#333" stroke-linejoin="round"/><path d="M24.5 10h4l3 3h-7z" fill="#8fd3ff"/><path d="M10 7h2.5v2.5H15V12h-2.5v2.5H10V12H7.5V9.5H10z" fill="#e63946"/><rect x="1.5" y="15.5" width="32" height="1.5" fill="#e63946"/><rect x="32.5" y="13.8" width="1.5" height="1.6" fill="#f4c430"/><circle cx="7" cy="19.5" r="3" fill="#333"/><circle cx="7" cy="19.5" r="1.2" fill="#bbb"/><circle cx="28" cy="19.5" r="3" fill="#333"/><circle cx="28" cy="19.5" r="1.2" fill="#bbb"/></svg>';
   const zone = L.polyline([], { color: '#e63946', opacity: 0.25, lineCap: 'round', lineJoin: 'round' }).addTo(map);
   const ambMarker = L.marker(route[0], {
-    icon: L.divIcon({ className: '', html: '<div class="amb">🚑</div>', iconSize: [30, 30], iconAnchor: [15, 15] }),
+    icon: L.divIcon({ className: '', html: '<div>' + AMB_SVG + '</div>', iconSize: [36, 24], iconAnchor: [18, 12] }),
     zIndexOffset: 1000
   }).addTo(map);
 
-  // The 🚑 emoji faces left on most platforms; mirror it when driving east so it doesn't look
-  // like it's reversing. Ignore near-vertical stretches so it doesn't flicker.
+  // The ambulance icon faces east; mirror it when heading west.
+  // Small or mostly north-south moves keep the current facing so it doesn't flicker.
   function faceTravel(marker, a, b) {
     const el = marker.getElement && marker.getElement();
     if (!el || !a || !b) return;
     const dLng = b[1] - a[1], dLat = b[0] - a[0];
     if (Math.abs(dLng) < Math.abs(dLat) * 0.3) return;
-    el.firstChild.style.transform = dLng > 0 ? 'scaleX(-1)' : '';
+    el.firstChild.style.transform = dLng < 0 ? 'scaleX(-1)' : '';
   }
 
   // Corridor width in pixels = 2 × 150 m at the current zoom and latitude.
