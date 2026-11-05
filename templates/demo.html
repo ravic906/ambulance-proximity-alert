@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ambulance Alert Demo</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #111; color: #eee; margin: 0; }
+  header { padding: 14px 20px 10px; border-bottom: 1px solid #222; }
+  header h1 { font-size: 1.15rem; margin: 0 0 4px; }
+  header p { margin: 0; color: #9a9a9a; font-size: 0.88rem; line-height: 1.4; }
+  .layout { display: flex; gap: 16px; padding: 16px 20px; align-items: stretch; }
+  .mapwrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  #map { height: 68vh; min-height: 380px; border-radius: 10px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .controls button {
+    border: 1px solid #333; background: #1c1c1c; color: #eee; border-radius: 8px;
+    padding: 8px 12px; font-size: 0.85rem; cursor: pointer;
+  }
+  .controls button:hover { border-color: #555; }
+  .controls .hint { color: #888; font-size: 0.8rem; }
+  .phone {
+    width: 320px; flex-shrink: 0; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 22px;
+    padding: 18px 16px; display: flex; flex-direction: column; gap: 12px;
+  }
+  .phone h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: #888; margin: 0; }
+  .screen { background: #0d0d0d; border-radius: 12px; padding: 14px; min-height: 150px; }
+  .screen .who { font-weight: 700; margin-bottom: 8px; }
+  .banner {
+    background: #e63946; color: #fff; font-weight: 700; text-align: center; border-radius: 8px;
+    padding: 12px 10px; margin-bottom: 10px; animation: flash 1s infinite;
+  }
+  @keyframes flash { 0%,100% { background: #e63946; } 50% { background: #ff5a63; } }
+  .calm { color: #9a9a9a; font-size: 0.92rem; line-height: 1.4; }
+  .dist { font-size: 0.95rem; line-height: 1.4; }
+  ul.cars { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+  ul.cars li {
+    display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 8px;
+    background: #141414; border: 1px solid #262626; cursor: pointer; font-size: 0.85rem;
+  }
+  ul.cars li.sel { border-color: #2a9d8f; }
+  ul.cars li .st { color: #888; }
+  ul.cars li.on .st { color: #ff6b74; font-weight: 700; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; color: #888; font-size: 0.78rem; }
+  .sw { display: inline-block; width: 18px; height: 8px; border-radius: 4px; vertical-align: middle; margin-right: 5px; }
+  .how { color: #8a8a8a; font-size: 0.8rem; line-height: 1.45; }
+  .how a { color: #6cc3b8; }
+  .pin {
+    width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font: 700 12px/1 -apple-system, sans-serif; color: #fff; background: #555; border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,.5);
+  }
+  .pin.on { background: #e63946; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(230,57,70,.7); } 50% { box-shadow: 0 0 0 10px rgba(230,57,70,0); } }
+  .amb { font-size: 28px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); }
+  @media (max-width: 860px) {
+    .layout { flex-direction: column; padding: 12px 16px; }
+    .phone { width: 100%; border-radius: 14px; }
+    #map { height: 52vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🚑 Route-aware ambulance alerts — live demo</h1>
+  <p>A simulated ambulance drives a real road route in Secunderabad. Only cars within 150 m of the next 800 m of its route get an alert.
+     Drop cars anywhere by clicking the map, drag them around, and watch which ones are warned.</p>
+</header>
+
+<div class="layout">
+  <div class="mapwrap">
+    <div id="map"></div>
+    <div class="controls">
+      <button id="addAhead">+ Car on the route ahead</button>
+      <button id="addSide">+ Car 280 m off the route</button>
+      <button id="addBehind">+ Car behind the ambulance</button>
+      <button id="clear">Clear cars</button>
+      <span class="hint">or click the map to drop a car</span>
+    </div>
+    <div class="legend">
+      <span><span class="sw" style="background:#e63946;opacity:.35"></span>alert zone (150 m × 800 m ahead)</span>
+      <span><span class="sw" style="background:#4a90d9"></span>ambulance route to hospital</span>
+      <span><span class="sw" style="background:#e63946"></span>car being alerted</span>
+      <span><span class="sw" style="background:#555"></span>car not alerted</span>
+    </div>
+  </div>
+
+  <aside class="phone">
+    <h2>Selected driver's phone</h2>
+    <div class="screen" id="screen"><div class="calm">Add a car to see what its driver sees.</div></div>
+    <h2>All cars</h2>
+    <ul class="cars" id="carList"></ul>
+    <div class="how">
+      Every second the server places the ambulance by the clock and runs the same route-ahead check used in live mode.
+      Prototype only — see the <a href="https://github.com/ravic906/ambulance-proximity-alert">source and README</a>.
+    </div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(async function () {
+  const meta = await fetch('/api/demo/route').then(r => r.json());
+  const route = meta.route, cum = meta.cumulative_m, total = cum[cum.length - 1];
+
+  const map = L.map('map', { zoomControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors', maxZoom: 19
+  }).addTo(map);
+  const routeLine = L.polyline(route, { color: '#4a90d9', weight: 4, opacity: 0.85, dashArray: '8 6' }).addTo(map);
+  map.fitBounds(routeLine.getBounds(), { padding: [24, 24] });
+  L.marker(route[route.length - 1], {
+    icon: L.divIcon({ className: '', html: '<div class="amb">🏥</div>', iconSize: [30, 30], iconAnchor: [15, 15] })
+  }).addTo(map);
+
+  const zone = L.polyline([], { color: '#e63946', opacity: 0.25, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+  const ambMarker = L.marker(route[0], {
+    icon: L.divIcon({ className: '', html: '<div class="amb">🚑</div>', iconSize: [30, 30], iconAnchor: [15, 15] }),
+    zIndexOffset: 1000
+  }).addTo(map);
+
+  // Corridor width in pixels = 2 × 150 m at the current zoom and latitude.
+  function sizeZone() {
+    const lat = map.getCenter().lat;
+    const mPerPx = 40075016.686 * Math.cos(lat * Math.PI / 180) / Math.pow(2, map.getZoom() + 8);
+    zone.setStyle({ weight: Math.max(4, (2 * meta.corridor_m) / mPerPx) });
+  }
+  map.on('zoomend', sizeZone);
+  sizeZone();
+
+  function pointAt(s) {
+    s = Math.max(0, Math.min(total, s));
+    let i = 0;
+    while (i < cum.length - 2 && cum[i + 1] <= s) i++;
+    const seg = cum[i + 1] - cum[i] || 1, f = (s - cum[i]) / seg;
+    const a = route[i], b = route[i + 1];
+    return { lat: a[0] + (b[0] - a[0]) * f, lng: a[1] + (b[1] - a[1]) * f, i };
+  }
+  function slice(s0, s1) {
+    const pts = [pointAt(s0)];
+    for (let i = 0; i < cum.length; i++) if (cum[i] > s0 && cum[i] < s1) pts.push({ lat: route[i][0], lng: route[i][1] });
+    pts.push(pointAt(s1));
+    return pts.map(p => [p.lat, p.lng]);
+  }
+  // Point `meters` to the left of the route at distance s along it.
+  function offsetFrom(s, meters) {
+    const p = pointAt(s), q = pointAt(Math.min(total, s + 30));
+    const mx = 111320 * Math.cos(p.lat * Math.PI / 180), my = 110540;
+    let dx = (q.lng - p.lng) * mx, dy = (q.lat - p.lat) * my;
+    const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+    return { lat: p.lat + (dx * meters) / my, lng: p.lng + (-dy * meters) / mx };
+  }
+
+  let along = 0;
+  const cars = [];
+  let nextLabel = 0, selected = null;
+  const screen = document.getElementById('screen');
+  const carList = document.getElementById('carList');
+
+  function label() { const l = String.fromCharCode(65 + (nextLabel % 26)); nextLabel++; return l; }
+
+  function addCar(lat, lng, note) {
+    if (cars.length >= 12) cars.shift().marker.remove();
+    const id = label();
+    const marker = L.marker([lat, lng], {
+      draggable: true,
+      icon: L.divIcon({ className: '', html: `<div class="pin">${id}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] })
+    }).addTo(map);
+    const car = { id, marker, note, alert: false, dist: null };
+    marker.on('click', () => select(car));
+    marker.on('dragend', () => { car.note = 'moved by you'; select(car); tick(); });
+    cars.push(car);
+    select(car);
+    tick();
+    return car;
+  }
+
+  function select(car) { selected = car; render(); }
+
+  function render() {
+    carList.innerHTML = '';
+    cars.forEach(c => {
+      const li = document.createElement('li');
+      li.className = (c === selected ? 'sel ' : '') + (c.alert ? 'on' : '');
+      li.innerHTML = `<span>Car ${c.id} <span style="color:#666">· ${c.note}</span></span><span class="st">${c.alert ? 'ALERT' : 'no alert'}</span>`;
+      li.onclick = () => select(c);
+      carList.appendChild(li);
+      const el = c.marker.getElement && c.marker.getElement();
+      if (el) el.firstChild.classList.toggle('on', c.alert);
+    });
+    if (!selected) {
+      screen.innerHTML = '<div class="calm">Add a car to see what its driver sees.</div>';
+    } else if (selected.alert) {
+      screen.innerHTML = `<div class="who">Car ${selected.id}</div>
+        <div class="banner">🚨 AMBULANCE APPROACHING ON YOUR ROUTE — MAKE WAY</div>
+        <div class="dist">The ambulance is <b>${selected.dist} m</b> behind you along the road.</div>`;
+    } else {
+      screen.innerHTML = `<div class="who">Car ${selected.id}</div>
+        <div class="calm">No alert. An ambulance is active nearby, but you are not on the road ahead of it.</div>`;
+    }
+  }
+
+  let busy = false;
+  async function tick() {
+    if (busy) return;
+    busy = true;
+    try {
+      const payload = { cars: cars.map(c => { const p = c.marker.getLatLng(); return { id: c.id, lat: p.lat, lng: p.lng }; }) };
+      const data = await fetch('/api/demo/state', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      }).then(r => r.json());
+      along = data.ambulance.along_m;
+      ambMarker.setLatLng([data.ambulance.lat, data.ambulance.lng]);
+      // Keep the ambulance in view (unless the reviewer has zoomed out far enough to see it anyway).
+      if (!map.getBounds().pad(-0.2).contains(ambMarker.getLatLng())) map.panTo(ambMarker.getLatLng());
+      zone.setLatLngs(slice(along, Math.min(total, along + meta.lookahead_m)));
+      const byId = Object.fromEntries(data.cars.map(c => [c.id, c]));
+      cars.forEach(c => { const r = byId[c.id]; if (r) { c.alert = r.alert; c.dist = r.distance_along_route_m; } });
+      render();
+    } catch (e) {
+      screen.innerHTML = '<div class="calm">Server not reachable — retrying…</div>';
+    } finally { busy = false; }
+  }
+
+  function ahead() { const p = pointAt(along + 450); addCar(p.lat, p.lng, 'on the route ahead'); }
+  function side() { const p = offsetFrom(Math.min(total, along + 350), 280); addCar(p.lat, p.lng, '280 m off the route'); }
+  function behind() {
+    const s = along > 250 ? along - 250 : 0;
+    const p = pointAt(s); addCar(p.lat, p.lng, 'behind the ambulance');
+  }
+
+  document.getElementById('addAhead').onclick = ahead;
+  document.getElementById('addSide').onclick = side;
+  document.getElementById('addBehind').onclick = behind;
+  document.getElementById('clear').onclick = () => { cars.splice(0).forEach(c => c.marker.remove()); selected = null; nextLabel = 0; render(); };
+  map.on('click', e => addCar(e.latlng.lat, e.latlng.lng, 'placed by you'));
+
+  await tick();
+  map.setView(ambMarker.getLatLng(), 16);
+  // Start with one of each case so the demo explains itself.
+  behind(); side(); ahead();
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>
