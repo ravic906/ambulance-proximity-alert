@@ -48,10 +48,12 @@
   const banner = document.getElementById('banner');
 
   let firstFix = true;
-  let driverId = localStorage ? null : null; // no localStorage per artifact rules elsewhere, keep in-memory
-  let driverIdMem = Math.random().toString(36).slice(2, 10);
+  const driverIdMem = Math.random().toString(36).slice(2, 10);
+  let routeMissionId = null;
 
+  let lastCheck = 0;
   function checkProximity(lat, lng) {
+    lastCheck = Date.now();
     fetch('/api/driver/check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -68,8 +70,10 @@
         return;
       }
 
+      if (data.mission_id !== routeMissionId && routeLine) { map.removeLayer(routeLine); routeLine = null; }
       if (data.route && data.route.length && !routeLine) {
         routeLine = L.polyline(data.route, { color: '#e63946', weight: 4, opacity: 0.5 }).addTo(map);
+        routeMissionId = data.mission_id;
       }
 
       if (ambulanceMarker) {
@@ -81,7 +85,7 @@
       renderOthers(data.other_drivers || []);
 
       if (data.alert) {
-        info.textContent = `Ambulance is on your route — ${data.distance_along_route_m} m ahead along the road`;
+        info.textContent = `Ambulance on your route — ${data.distance_along_route_m} m behind you along the road`;
         banner.classList.add('show');
         if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
       } else {
@@ -95,7 +99,6 @@
   function renderOthers(others) {
     const seenIds = new Set();
     others.forEach((o, i) => {
-      const id = 'o' + i + '_' + o.lat.toFixed(4) + '_' + o.lng.toFixed(4);
       seenIds.add(i);
       if (otherMarkers[i]) {
         otherMarkers[i].setLatLng([o.lat, o.lng]);
@@ -140,8 +143,9 @@
     info.textContent = 'Geolocation not supported on this device/browser';
   }
 
+  // Re-check while stationary (GPS fires rarely then), but don't double up with GPS updates.
   setInterval(() => {
-    if (driverMarker) {
+    if (driverMarker && Date.now() - lastCheck > 2400) {
       const pos = driverMarker.getLatLng();
       checkProximity(pos.lat, pos.lng);
     }

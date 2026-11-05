@@ -43,6 +43,10 @@
     <input type="text" id="licenseId" placeholder="e.g. DL-04-2024-0001234">
     <label>Photo verification (take a live photo)</label>
     <input type="file" id="photoInput" accept="image/*" capture="user">
+    {% if operator_key_required %}
+    <label>Operator access code</label>
+    <input type="text" id="operatorKey" placeholder="Issued by the ambulance service" autocomplete="off">
+    {% endif %}
     <div id="photoMsg"></div>
     <button id="verifyBtn">Verify & Continue</button>
     <div id="verifyMsg"></div>
@@ -78,6 +82,20 @@
   let destLat = null, destLng = null;
   let active = false;
   let watchId = null;
+  let missionToken = null;
+
+  function api(path, payload) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Mission-Token': missionToken || '' },
+      body: JSON.stringify(payload || {})
+    }).then(async (res) => {
+      let data = {};
+      try { data = await res.json(); } catch (e) {}
+      if (!res.ok) throw new Error(data.message || ('Request failed (' + res.status + ')'));
+      return data;
+    });
+  }
 
   photoInput.addEventListener('change', () => {
     photoCaptured = photoInput.files && photoInput.files.length > 0;
@@ -93,20 +111,19 @@
       return;
     }
 
-    const res = await fetch('/api/ambulance/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, license_id: licenseId, photo_captured: true })
-    });
-    const data = await res.json();
-
-    if (data.status === 'ok') {
+    const keyInput = document.getElementById('operatorKey');
+    try {
+      const data = await api('/api/ambulance/verify', {
+        name, license_id: licenseId, photo_captured: true,
+        operator_key: keyInput ? keyInput.value.trim() : ''
+      });
+      missionToken = data.token;
       verifiedBadge.textContent = `✓ Verified: ${data.driver.name}`;
       verifyPanel.classList.add('hidden');
       missionPanel.classList.remove('hidden');
       initMap();
-    } else {
-      verifyMsg.textContent = data.message || 'Verification failed.';
+    } catch (err) {
+      verifyMsg.textContent = err.message || 'Verification failed.';
     }
   });
 
@@ -153,24 +170,29 @@
     if (!active) {
       startBtn.disabled = true;
       startBtn.textContent = 'Fetching route...';
-      const res = await fetch('/api/ambulance/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start_lat: currentLat, start_lng: currentLng, dest_lat: destLat, dest_lng: destLng })
-      });
-      const data = await res.json();
+      let data;
+      try {
+        data = await api('/api/ambulance/start', { start_lat: currentLat, start_lng: currentLng, dest_lat: destLat, dest_lng: destLng });
+      } catch (err) {
+        startBtn.disabled = false;
+        startBtn.textContent = 'START MISSION';
+        status.textContent = 'Could not start mission: ' + err.message;
+        return;
+      }
       active = true;
       startBtn.disabled = false;
       startBtn.textContent = 'STOP MISSION';
       startBtn.classList.add('active');
-      status.textContent = 'Mission ACTIVE — broadcasting location along route';
+      status.textContent = data.route_is_fallback
+        ? '⚠️ Mission ACTIVE, but road routing is unavailable — using a straight line, so alerts may be wrong'
+        : 'Mission ACTIVE — broadcasting location along route';
 
       if (routeLine) map.removeLayer(routeLine);
       routeLine = L.polyline(data.route, { color: '#e63946', weight: 4, opacity: 0.7 }).addTo(map);
 
       startTracking();
     } else {
-      await fetch('/api/ambulance/stop', { method: 'POST' });
+      try { await api('/api/ambulance/stop'); } catch (err) { status.textContent = 'Stop failed: ' + err.message; return; }
       active = false;
       if (watchId !== null) navigator.geolocation.clearWatch(watchId);
       startBtn.textContent = 'START MISSION';
@@ -186,11 +208,8 @@
       const lng = pos.coords.longitude;
       coords.textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
       if (ambMarker) ambMarker.setLatLng([lat, lng]);
-      await fetch('/api/ambulance/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lat, lng })
-      });
+      try { await api('/api/ambulance/update', { lat, lng }); }
+      catch (err) { status.textContent = 'Update failed: ' + err.message; }
     }, (err) => { status.textContent = 'Location error: ' + err.message; },
     { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
   }
