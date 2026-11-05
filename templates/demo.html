@@ -121,6 +121,16 @@
     zIndexOffset: 1000
   }).addTo(map);
 
+  // The 🚑 emoji faces left on most platforms; mirror it when driving east so it doesn't look
+  // like it's reversing. Ignore near-vertical stretches so it doesn't flicker.
+  function faceTravel(marker, a, b) {
+    const el = marker.getElement && marker.getElement();
+    if (!el || !a || !b) return;
+    const dLng = b[1] - a[1], dLat = b[0] - a[0];
+    if (Math.abs(dLng) < Math.abs(dLat) * 0.3) return;
+    el.firstChild.style.transform = dLng > 0 ? 'scaleX(-1)' : '';
+  }
+
   // Corridor width in pixels = 2 × 150 m at the current zoom and latitude.
   function sizeZone() {
     const lat = map.getCenter().lat;
@@ -213,6 +223,7 @@
       }).then(r => r.json());
       along = data.ambulance.along_m;
       ambMarker.setLatLng([data.ambulance.lat, data.ambulance.lng]);
+      faceTravel(ambMarker, route[data.ambulance.index], route[data.ambulance.index + 1]);
       // Keep the ambulance in view (unless the reviewer has zoomed out far enough to see it anyway).
       if (!map.getBounds().pad(-0.2).contains(ambMarker.getLatLng())) map.panTo(ambMarker.getLatLng());
       zone.setLatLngs(slice(along, Math.min(total, along + meta.lookahead_m)));
