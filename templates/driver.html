@@ -44,6 +44,16 @@
   let ambulanceMarker = null;
   let routeLine = null;
   let otherMarkers = {};
+
+  // The 🚑 emoji faces left on most platforms; mirror it when moving east so it doesn't look
+  // like it's reversing. Small or mostly north-south moves keep the current facing.
+  function faceTravel(marker, from, to) {
+    const el = marker && marker.getElement && marker.getElement();
+    if (!el || !from || !to) return;
+    const dLng = to.lng - from.lng, dLat = to.lat - from.lat;
+    if (Math.abs(dLng) < 0.00003 || Math.abs(dLng) < Math.abs(dLat) * 0.3) return;
+    el.firstChild.style.transform = dLng > 0 ? 'scaleX(-1)' : '';
+  }
   const info = document.getElementById('info');
   const banner = document.getElementById('banner');
 
@@ -77,7 +87,9 @@
       }
 
       if (ambulanceMarker) {
+        const prev = ambulanceMarker.getLatLng();
         ambulanceMarker.setLatLng([data.ambulance_lat, data.ambulance_lng]);
+        faceTravel(ambulanceMarker, prev, ambulanceMarker.getLatLng());
       } else if (data.ambulance_lat) {
         ambulanceMarker = L.marker([data.ambulance_lat, data.ambulance_lng], { icon: ambulanceIcon }).addTo(map);
       }
