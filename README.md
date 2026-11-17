@@ -77,6 +77,30 @@ python3 app.py            # http://localhost:5000 — set FLASK_DEBUG=1 for the 
 
 Keep a single gunicorn worker (`--workers 1`): state lives in memory, so all requests must reach the same process.
 
+## Testing
+
+**Unit and API tests** (about 120, under a second, no network):
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+- `tests/test_geometry.py`: the alert check, including the corridor edge, lookahead, cars behind the ambulance, distance along the road, routes that double back, and the demo ambulance's movement.
+- `tests/test_api.py`: verification and operator key, mission tokens, driver privacy and expiry, malformed or wrongly typed input (never a server error), concurrent requests, and the demo endpoints.
+
+**Browser smoke test** (the demo and the live two-phone flow in headless Chromium):
+
+```bash
+OPERATOR_KEY=test-key python3 app.py                      # in one terminal
+npm install --no-save playwright && npx playwright install chromium
+OPERATOR_KEY=test-key node tests/e2e/smoke.js
+```
+
+It checks which demo cars are alerted, that the ambulance icon faces its direction of travel, the phone layout, and the live flow from verification to alert to stop. It uses the public OSRM and OpenStreetMap servers.
+
+Both run on every push and pull request in GitHub Actions (`.github/workflows/tests.yml`).
+
 ## Status
 
 Early-stage prototype, built to test whether route-aware alerts are technically feasible. Not production-ready. Feedback is welcome from anyone working on maps, navigation, or emergency response.
