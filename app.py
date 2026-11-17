@@ -204,10 +204,20 @@ def expire_stale_drivers():
 
 
 def body():
-    return request.get_json(silent=True) or {}
+    """The request's JSON object, or {} for a missing, invalid or non-object body."""
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def text(value):
+    """A stripped string, or "" for anything that isn't a string."""
+    return value.strip() if isinstance(value, str) else ""
 
 
 def as_float(value):
+    """A finite float from a number or numeric string; None for anything else (bools included)."""
+    if isinstance(value, bool):
+        return None
     try:
         f = float(value)
     except (TypeError, ValueError):
@@ -246,10 +256,10 @@ def demo_page():
 @app.route("/api/ambulance/verify", methods=["POST"])
 def verify_driver():
     data = body()
-    name = (data.get("name") or "").strip()
-    license_id = (data.get("license_id") or "").strip()
-    has_photo = bool(data.get("photo_captured"))
-    operator_key = data.get("operator_key") or ""
+    name = text(data.get("name"))
+    license_id = text(data.get("license_id"))
+    has_photo = data.get("photo_captured") is True
+    operator_key = text(data.get("operator_key"))
 
     if not name or not license_id or not has_photo:
         return jsonify({"status": "error", "message": "Name, license ID, and photo capture are all required."}), 400
@@ -325,11 +335,11 @@ def stop_mission():
 def update_location():
     data = body()
     lat, lng = as_float(data.get("lat")), as_float(data.get("lng"))
-    if lat is None or lng is None:
-        return jsonify({"status": "error", "message": "lat and lng are required."}), 400
     with lock:
         if not mission_token_ok():
             return jsonify({"status": "error", "message": "Not verified for this mission."}), 403
+        if lat is None or lng is None:
+            return jsonify({"status": "error", "message": "lat and lng are required."}), 400
         if not ambulance_state["active"]:
             return jsonify({"status": "no_active_mission"}), 400
         ambulance_state["lat"] = lat
@@ -421,10 +431,14 @@ def demo_route():
 def demo_state():
     """Stateless: the browser sends its cars; the server places the ambulance by the clock
     and runs the same route-ahead check used for live missions."""
-    cars = body().get("cars") or []
+    cars = body().get("cars")
+    if not isinstance(cars, list):
+        cars = []
     i, offset, lat, lng, along = demo_ambulance_at(time.time())
     results = []
     for car in cars[:DEMO_MAX_CARS]:
+        if not isinstance(car, dict):
+            continue
         clat, clng = as_float(car.get("lat")), as_float(car.get("lng"))
         if clat is None or clng is None:
             continue
